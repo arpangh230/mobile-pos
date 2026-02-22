@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Advanced Mobile POS - Professional Sync</title>
+    
+    <!-- CSS Dependencies -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <!-- Firebase SDKs (Exactly like index1.html) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js"></script>
+
+    <style>
+        :root { --primary: #2563eb; --success: #10b981; --danger: #ef4444; --bg: #f8fafc; }
+        body { font-family: 'Noto Sans Bengali', sans-serif; background-color: var(--bg); padding-bottom: 85px; }
+        
+        /* Bottom Navigation */
+        .bottom-nav {
+            position: fixed; bottom: 0; left: 0; right: 0; background: white;
+            display: flex; justify-content: space-around; padding: 12px 0;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.1); z-index: 1000;
+            border-top-left-radius: 20px; border-top-right-radius: 20px;
+        }
+        .nav-item { text-align: center; color: #64748b; text-decoration: none; font-size: 11px; flex: 1; transition: 0.3s; }
+        .nav-item i { font-size: 22px; display: block; margin-bottom: 4px; }
+        .nav-item.active { color: var(--primary); font-weight: bold; }
+
+        /* UI Styling */
+        .app-section { display: none; padding: 15px; animation: slideIn 0.3s ease; }
+        .app-section.active { display: block; }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .card { border: none; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); margin-bottom: 15px; background: #fff; }
+        .stat-card { padding: 20px 15px; text-align: center; border-bottom: 5px solid var(--primary); height: 100%; }
+        .stat-card h4 { font-size: 18px; font-weight: 700; margin-top: 5px; }
+
+        .suggestion-box { position: absolute; width: 100%; background: white; z-index: 1100; box-shadow: 0 10px 30px rgba(0,0,0,0.15); max-height: 250px; overflow-y: auto; border-radius: 12px; border: 1px solid #eee; }
+        .suggestion-item { padding: 12px 15px; border-bottom: 1px solid #f8fafc; cursor: pointer; }
+
+        #loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); display: flex; justify-content: center; align-items: center; z-index: 9999; flex-direction: column; }
+    </style>
+</head>
+<body>
+
+    <div id="loader">
+        <div class="spinner-border text-primary mb-2"></div>
+        <div class="small fw-bold text-primary">ডাটা সিঙ্ক হচ্ছে...</div>
+    </div>
+
+    <!-- Header -->
+    <div class="bg-primary text-white p-3 sticky-top d-flex justify-content-between align-items-center shadow-sm">
+        <h6 class="m-0 fw-bold"><i class="fa fa-shopping-cart me-2"></i>Smart POS Mobile</h6>
+        <span id="auth-status" class="badge bg-light text-primary small">Connecting...</span>
+    </div>
+
+    <!-- 1. Dashboard -->
+    <section id="dashboard" class="app-section active">
+        <div class="row g-2 mb-3">
+            <div class="col-6"><div class="card stat-card"><h6>আজকের বিক্রি</h6><h4 id="dash-sale">৳ ০</h4></div></div>
+            <div class="col-6"><div class="card stat-card" style="border-color: var(--danger);"><h6>মোট বকেয়া</h6><h4 id="dash-due">৳ ০</h4></div></div>
+            <div class="col-6"><div class="card stat-card" style="border-color: var(--success);"><h6>ক্যাশ ব্যালেন্স</h6><h4 id="dash-cash">৳ ০</h4></div></div>
+            <div class="col-6"><div class="card stat-card" style="border-color: #6366f1;"><h6>ব্যাংক ব্যালেন্স</h6><h4 id="dash-bank">৳ ০</h4></div></div>
+        </div>
+    </section>
+
+    <!-- 2. POS -->
+    <section id="pos" class="app-section">
+        <div class="card p-3 mb-3 border-0 position-relative">
+            <input type="text" id="pos-prod-input" class="form-control" placeholder="প্রোডাক্ট খুঁজুন (নাম/আইডি)...">
+            <div id="prod-sug" class="suggestion-box" style="display:none;"></div>
+            
+            <div id="cart-items" class="mt-3 border-top pt-2" style="max-height: 200px; overflow-y: auto;">
+                <p class="text-center text-muted small my-3">কার্ট খালি</p>
+            </div>
+            <div class="d-flex justify-content-between fw-bold pt-2 border-top mt-2">
+                <span>মোট বিল:</span> <span id="cart-total" class="text-primary fs-5">৳ ০</span>
+            </div>
+        </div>
+
+        <div class="card p-3 border-0 shadow-sm">
+            <h6 class="fw-bold small text-muted mb-2">কাস্টমার তথ্য</h6>
+            <div class="position-relative mb-2">
+                <input type="text" id="pos-cust-name" class="form-control" placeholder="কাস্টমার নাম">
+                <div id="cust-sug" class="suggestion-box" style="display:none;"></div>
+            </div>
+            <input type="text" id="pos-cust-phone" class="form-control mb-2" placeholder="ফোন নম্বর">
+            <input type="text" id="pos-cust-addr" class="form-control mb-3" placeholder="ঠিকানা">
+            
+            <select id="pos-pay-method" class="form-select mb-3" onchange="toggleBankDiv()">
+                <option value="due">বাকি (Due)</option>
+                <option value="cash">নগদ (Cash)</option>
+                <option value="bank">ব্যাংক (Bank)</option>
+            </select>
+            <div id="bank-div" style="display:none;" class="mb-3"><select id="bank-select" class="form-select small"></select></div>
+            <button class="btn btn-primary w-100 py-3 fw-bold" onclick="saveSale()">বিক্রয় সম্পন্ন করুন</button>
+        </div>
+    </section>
+
+    <!-- 3. Sales Report -->
+    <section id="sales" class="app-section">
+        <input type="date" id="sale-filter" class="form-control mb-3" onchange="loadSalesReport()">
+        <div id="sales-list-div"></div>
+    </section>
+
+    <!-- 4. Customers -->
+    <section id="customers" class="app-section">
+        <div id="customer-list-div"></div>
+    </section>
+
+    <!-- Bottom Nav -->
+    <nav class="bottom-nav">
+        <a href="#" class="nav-item active" onclick="switchSec('dashboard', this)"><i class="fa fa-th-large"></i>ড্যাশবোর্ড</a>
+        <a href="#" class="nav-item" onclick="switchSec('pos', this)"><i class="fa fa-shopping-cart"></i>POS</a>
+        <a href="#" class="nav-item" onclick="switchSec('sales', this)"><i class="fa fa-file-invoice"></i>বিক্রি</a>
+        <a href="#" class="nav-item" onclick="switchSec('customers', this)"><i class="fa fa-users"></i>কাস্টমার</a>
+        <a href="#" class="nav-item" onclick="location.reload()"><i class="fa fa-sync"></i>রিফ্রেশ</a>
+    </nav>
+
+    <script>
+        // --- Firebase Config (Exactly from your index1.html) ---
+        const FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBaWtBbFZS7NcZRsPZ4092kHeSfq2Jcm2o",
+            authDomain: "datatechsolutionag.firebaseapp.com",
+            projectId: "datatechsolutionag",
+            storageBucket: "datatechsolutionag.firebasestorage.app",
+            messagingSenderId: "53908668722",
+            appId: "1:53908668722:web:fa287e03055dae1bfa172b",
+            measurementId: "G-2JJBBZ99VQ"
+        };
+
+        firebase.initializeApp(FIREBASE_CONFIG);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+
+        let products = [], customers = [], sales = [], banks = [], ledgers = [];
+        let cart = [], invoiceNo = 10011;
+
+        // --- AUTH & INITIALIZATION (Fixes Permissions Error) ---
+        auth.onAuthStateChanged(async (user) => {
+            if (!user) {
+                try {
+                    await auth.signInAnonymously();
+                } catch (e) {
+                    console.error("Auth failed:", e);
+                    alert("ডাটাবেস কানেকশন এরর!");
+                }
+            } else {
+                document.getElementById('auth-status').innerText = "Online";
+                startRealtimeSync();
+            }
+        });
+
+        // --- REALTIME DATA SYNC ---
+        function startRealtimeSync() {
+            // Products
+            db.collection('products').onSnapshot(snap => {
+                products = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                updateDash();
+                document.getElementById('loader').style.display = 'none';
+            });
+
+            // Customers
+            db.collection('customers').onSnapshot(snap => {
+                customers = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                updateDash();
+            });
+
+            // Banks
+            db.collection('banks').onSnapshot(snap => {
+                banks = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                const sel = document.getElementById('bank-select');
+                sel.innerHTML = banks.map(b => `<option value="${b.id}">${b.bankName}</option>`).join('');
+            });
+
+            // Ledgers
+            db.collection('ledgerEntries').onSnapshot(snap => {
+                ledgers = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                updateDash();
+            });
+
+            // Settings (Invoice)
+            db.collection('settings').doc('invoice_config').onSnapshot(doc => {
+                if(doc.exists) invoiceNo = doc.data().nextInvoice || 10011;
+                else db.collection('settings').doc('invoice_config').set({nextInvoice: 10011});
+            });
+        }
+
+        // --- DASHBOARD ---
+        function updateDash() {
+            const today = moment().format('YYYY-MM-DD');
+            db.collection('sales').where('date', '==', today).get().then(snap => {
+                let s = 0; snap.forEach(d => s += (d.data().finalAmount || 0));
+                document.getElementById('dash-sale').innerText = `৳ ${s.toLocaleString()}`;
+            });
+
+            let d = 0; customers.forEach(c => d += (c.currentDue || 0));
+            document.getElementById('dash-due').innerText = `৳ ${d.toLocaleString()}`;
+
+            let cash = 0; ledgers.forEach(l => cash += (l.type === 'income' ? l.amount : -l.amount));
+            document.getElementById('dash-cash-bal').innerText = `৳ ${cash.toLocaleString()}`;
+
+            let bank = 0; banks.forEach(b => bank += (b.currentBalance || 0));
+            document.getElementById('dash-bank-bal').innerText = `৳ ${bank.toLocaleString()}`;
+        }
+
+        // --- POS Logic ---
+        document.getElementById('pos-prod-input').oninput = function() {
+            const v = this.value.toLowerCase();
+            const sug = document.getElementById('prod-sug');
+            sug.innerHTML = '';
+            if(!v) return sug.style.display = 'none';
+            const matched = products.filter(p => p.name.toLowerCase().includes(v) || p.id.includes(v));
+            matched.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'suggestion-item';
+                div.innerHTML = `<b>${p.name}</b> <span class="float-end">৳${p.price}</span>`;
+                div.onclick = () => {
+                    const ex = cart.find(i => i.id === p.id);
+                    if(ex) ex.qty++; else cart.push({...p, qty: 1});
+                    renderCart(); sug.style.display='none'; document.getElementById('pos-prod-input').value='';
+                };
+                sug.appendChild(div);
+            });
+            sug.style.display = matched.length ? 'block' : 'none';
+        }
+
+        function renderCart() {
+            const div = document.getElementById('cart-items');
+            div.innerHTML = '';
+            let total = 0;
+            if(!cart.length) div.innerHTML = '<p class="text-center text-muted small my-3">কার্ট খালি</p>';
+            cart.forEach((i, idx) => {
+                total += i.price * i.qty;
+                div.innerHTML += `<div class="d-flex justify-content-between mb-2 small p-2 bg-light rounded">
+                    <div><b>${i.name}</b><br>৳${i.price} x ${i.qty}</div>
+                    <button class="btn btn-sm text-danger" onclick="cart.splice(${idx},1); renderCart()"><i class="fa fa-trash"></i></button>
+                </div>`;
+            });
+            document.getElementById('cart-total').innerText = `৳ ${total}`;
+        }
+
+        // --- Process Sale ---
+        async function saveSale() {
+            if(!cart.length) return alert("কার্ট খালি!");
+            const name = document.getElementById('pos-cust-name').value || "ক্যাশ কাস্টমার";
+            const phone = document.getElementById('pos-cust-phone').value;
+            const method = document.getElementById('pos-pay-method').value;
+
+            document.getElementById('loader').style.display = 'flex';
+            const total = cart.reduce((s, i) => s + (i.price * i.qty), 0);
+            const inv = invoiceNo.toString();
+            const date = moment().format('YYYY-MM-DD');
+
+            try {
+                const batch = db.batch();
+                
+                // Customer
+                let cust = customers.find(c => c.phone === phone);
+                let custId = cust ? cust.id : db.collection('customers').doc().id;
+                if(!cust) batch.set(db.collection('customers').doc(custId), { id: custId, name, phone, currentDue: 0, totalPurchased: 0 });
+
+                // Update Due/Stock
+                const custRef = db.collection('customers').doc(custId);
+                if(method === 'due') batch.update(custRef, { currentDue: firebase.firestore.FieldValue.increment(total) });
+                batch.update(custRef, { totalPurchased: firebase.firestore.FieldValue.increment(total) });
+
+                cart.forEach(i => batch.update(db.collection('products').doc(i.id), { stock: firebase.firestore.FieldValue.increment(-i.qty) }));
+
+                // Save Sale
+                batch.set(db.collection('sales').doc(inv), { saleId: inv, date, customerId: custId, customerName: name, finalAmount: total, paymentMethod: method, items: cart });
+
+                // Ledger
+                if(method === 'cash') batch.set(db.collection('ledgerEntries').doc("L"+Date.now()), { type: 'income', amount: total, date, saleId: inv });
+                
+                batch.update(db.collection('settings').doc('invoice_config'), { nextInvoice: firebase.firestore.FieldValue.increment(1) });
+
+                await batch.commit();
+                alert("বিক্রয় সম্পন্ন! ইনভয়েস: " + inv);
+                cart = []; renderCart(); switchSec('dashboard', document.querySelector('.nav-item'));
+            } catch(e) { alert(e.message); }
+            document.getElementById('loader').style.display = 'none';
+        }
+
+        // --- Bill Delete (Auto Rollback) ---
+        async function deleteBill(inv) {
+            if(!confirm('এটি ডিলিট করলে স্টক এবং ডিউ অটো ঠিক হয়ে যাবে। নিশ্চিত?')) return;
+            document.getElementById('loader').style.display = 'flex';
+            try {
+                const doc = await db.collection('sales').doc(inv).get();
+                const sale = doc.data();
+                const batch = db.batch();
+
+                sale.items.forEach(i => batch.update(db.collection('products').doc(i.id), { stock: firebase.firestore.FieldValue.increment(i.qty) }));
+                
+                const custRef = db.collection('customers').doc(sale.customerId);
+                if(sale.paymentMethod === 'due') batch.update(custRef, { currentDue: firebase.firestore.FieldValue.increment(-sale.finalAmount) });
+                batch.update(custRef, { totalPurchased: firebase.firestore.FieldValue.increment(-sale.finalAmount) });
+
+                const gl = await db.collection('ledgerEntries').where('saleId', '==', inv).get();
+                gl.forEach(g => batch.delete(g.ref));
+
+                batch.delete(db.collection('sales').doc(inv));
+                await batch.commit();
+                alert('সফলভাবে ডিলিট হয়েছে।');
+                loadSalesReport();
+            } catch(e) { alert(e.message); }
+            document.getElementById('loader').style.display = 'none';
+        }
+
+        function switchSec(id, el) {
+            document.querySelectorAll('.app-section').forEach(s => s.classList.remove('active'));
+            document.getElementById(id).classList.add('active');
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            el.classList.add('active');
+        }
+
+        function toggleBankDiv() { document.getElementById('bank-div').style.display = document.getElementById('pos-pay-method').value === 'bank' ? 'block' : 'none'; }
+    </script>
+</body>
+</html>
